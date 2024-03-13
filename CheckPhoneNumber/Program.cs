@@ -12,6 +12,17 @@ namespace CheckPhoneNumber
         private static string? _resultFilePath;
         private static string? _cleanedResultFilePath;
 
+        private class ValueCsv
+        {
+            public string? Value { get; set; }
+            public string? Phone { get; set; }
+
+            public override string ToString()
+            {
+                return $"{Value}; {Phone};";
+            }
+        }
+
         static async Task Main(string[] args)
         {
             _baseFilePath = args.Length > 0 ? args[0] : "input.csv"; // Путь к файлу с базой номеров телефонов
@@ -23,7 +34,7 @@ namespace CheckPhoneNumber
             Stopwatch stopwatch = Stopwatch.StartNew();
 
             // Загрузка базы номеров телефонов
-            HashSet<string> phoneNumbers = await LoadBaseFileAsync(_baseFilePath);
+            HashSet<ValueCsv> phoneNumbers = await LoadBaseFileAsync(_baseFilePath);
 
             // Проверка номеров из второго файла и сохранение результатов
             await CheckAndSaveNumbersAsync(phoneNumbers, _checkFilePath, _resultFilePath);
@@ -45,9 +56,9 @@ namespace CheckPhoneNumber
             Console.WriteLine("Done!");
         }
 
-        static async Task<HashSet<string>> LoadBaseFileAsync(string filePath)
+        static async Task<HashSet<ValueCsv>> LoadBaseFileAsync(string filePath)
         {
-            HashSet<string> phoneNumbers = new HashSet<string>();
+            HashSet<ValueCsv> phoneNumbers = new HashSet<ValueCsv>();
             long counter = 0;
 
             using (var streamReader = new StreamReader(filePath))
@@ -56,18 +67,20 @@ namespace CheckPhoneNumber
                 // Настройка буферизации чтения
                 //BufferSize = 4096,
                 HasHeaderRecord = false, // Если нет заголовка в файле
-                BadDataFound = arg => phoneNumbers.Add(arg.Context.Parser.RawRecord)
+                BadDataFound = arg => { }
             }))
             {
                 while (await csvReader.ReadAsync())
                 {
                     string phoneNumber = csvReader.GetField<string>(0);
                     string[] parts = phoneNumber.Split('\t');
+                    string? value = null; 
                     if (parts.Length > 1)
                     {
+                        value = parts[0].Replace("\"", "").Trim();
                         phoneNumber = parts[1].Replace("\"", "").Trim();
                     }
-                    phoneNumbers.Add(phoneNumber);
+                    phoneNumbers.Add(new ValueCsv() { Value = value, Phone = phoneNumber });
 
                     counter++;
 
@@ -79,7 +92,7 @@ namespace CheckPhoneNumber
                     if (counter % 10000000 == 0)
                     {
                         await CheckAndSaveNumbersAsync(phoneNumbers, _checkFilePath, _resultFilePath);
-                        phoneNumbers = new HashSet<string>(); // Создаем новый объект HashSet для очистки памяти
+                        phoneNumbers = new HashSet<ValueCsv>(); // Создаем новый объект HashSet для очистки памяти
                     }
                 }
             }
@@ -93,23 +106,40 @@ namespace CheckPhoneNumber
             return phoneNumbers;
         }
 
-        static async Task CheckAndSaveNumbersAsync(HashSet<string> phoneNumbers, string checkFilePath, string resultFilePath)
+        static async Task CheckAndSaveNumbersAsync(HashSet<ValueCsv> phoneNumbers, string checkFilePath, string resultFilePath)
         {
-            using (StreamWriter writer = new StreamWriter(resultFilePath, true))
+            // Создаем словарь для хранения объектов ValueCsv по номерам телефонов
+            var phoneDictionary = new Dictionary<string, List<string>>();
+
+            // Заполняем словарь из phoneNumbers
+            foreach (var item in phoneNumbers)
             {
-                using (StreamReader checkReader = new StreamReader(checkFilePath))
+                if (!phoneDictionary.ContainsKey(item.Phone))
                 {
-                    string phoneNumber;
-                    while ((phoneNumber = await checkReader.ReadLineAsync()) != null)
+                    phoneDictionary.Add(item.Phone, new List<string>());
+                }
+                phoneDictionary[item.Phone].Add(item.Value);
+            }
+
+            using (StreamWriter writer = new StreamWriter(resultFilePath, true))
+            using (StreamReader checkReader = new StreamReader(checkFilePath))
+            {
+                string phoneNumber;
+                while ((phoneNumber = await checkReader.ReadLineAsync()) != null)
+                {
+                    phoneNumber = phoneNumber.Trim(); // Убираем лишние пробелы вокруг номера
+                    if (phoneDictionary.TryGetValue(phoneNumber, out var values))
                     {
-                        if (phoneNumbers.Contains(phoneNumber.Trim()))
+                        // Если номер найден в словаре, записываем все соответствующие значения в файл результатов
+                        foreach (var value in values)
                         {
-                            await writer.WriteLineAsync(phoneNumber.Trim()); // Сохраняем номер в результат
+                            await writer.WriteLineAsync($"{value}; {phoneNumber};");
                         }
                     }
                 }
             }
         }
+
 
         static async Task RemoveDuplicatesAsync(string inputFilePath, string outputFilePath)
         {
